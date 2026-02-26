@@ -2,16 +2,17 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>KIO AeroLab | Preset Models</title>
+<title>KIO AeroLab | Wind Tunnel Visual</title>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/loaders/GLTFLoader.js"></script>
 
 <style>
 body{
     margin:0;
-    background:#05080d;
+    background:#2e2e2e;
     font-family:Arial;
-    color:#d0fef4;
+    color:white;
     overflow:hidden;
 }
 
@@ -20,43 +21,42 @@ body{
     left:20px;
     top:20px;
     width:420px;
-    background:#0c1118;
+    background:#3a3a3a;
     padding:20px;
-    border-radius:12px;
-    box-shadow:0 0 30px rgba(0,255,200,0.2);
+    border-radius:10px;
 }
 
 h1{
     font-size:18px;
-    color:#00ffd0;
+    margin-bottom:5px;
 }
 
 .sub{
     font-size:11px;
     margin-bottom:10px;
-    color:#7fffe1;
+    color:#ddd;
 }
 
 label{
     font-size:12px;
-    display:block;
     margin-top:8px;
+    display:block;
 }
 
-input, select{
+input{
     width:100%;
     padding:6px;
     margin-top:4px;
-    background:#131a23;
+    background:#555;
     border:none;
     color:white;
 }
 
 button{
     width:100%;
-    margin-top:12px;
+    margin-top:10px;
     padding:8px;
-    background:#00ffd0;
+    background:red;
     border:none;
     font-weight:bold;
     cursor:pointer;
@@ -66,9 +66,9 @@ button{
     margin-top:12px;
     font-size:12px;
     line-height:1.6;
-    background:#111722;
+    background:#444;
     padding:10px;
-    border-radius:8px;
+    border-radius:6px;
 }
 </style>
 </head>
@@ -76,45 +76,35 @@ button{
 <body>
 
 <div id="panel">
-<h1>KIO Aerodynamics Lab</h1>
+<h1>KIO Wind Tunnel</h1>
 <div class="sub">Keep It Original – Engineered by Bam Vytlas</div>
 
-<label>Select Model</label>
-<select id="modelSelect" onchange="loadPreset()">
-<option value="f1">F1 Concept</option>
-<option value="nascar">Stock Car Concept</option>
-<option value="lmp">Prototype LMP</option>
-<option value="wing">Rear Wing Element</option>
-<option value="cube">Basic Cube</option>
-<option value="cylinder">Cylinder</option>
-</select>
-
 <label>Wind Speed (m/s)</label>
-<input type="number" id="wind" value="70">
+<input type="number" id="wind" value="60">
 
-<label>Air Temp (°C)</label>
-<input type="number" id="temp" value="15">
-
-<label>Cd</label>
+<label>Drag Coefficient (Cd)</label>
 <input type="number" id="cd" value="0.30">
 
-<label>Cl</label>
-<input type="number" id="cl" value="-3.0">
+<label>Lift Coefficient (Cl)</label>
+<input type="number" id="cl" value="-1.5">
 
 <label>Frontal Area (m²)</label>
 <input type="number" id="area" value="1.5">
 
-<button onclick="runSim()">Run Wind Tunnel</button>
+<label>Import Model (.glb/.gltf)</label>
+<input type="file" id="upload">
+
+<button onclick="runSim()">Run Simulation</button>
 
 <div id="telemetry"></div>
 </div>
 
 <script>
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x05080d);
+scene.background = new THREE.Color(0x2e2e2e);
 
 const camera = new THREE.PerspectiveCamera(70,window.innerWidth/window.innerHeight,0.1,1000);
-camera.position.set(0,2,6);
+camera.position.set(0,2,7);
 
 const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(window.innerWidth,window.innerHeight);
@@ -124,117 +114,109 @@ const light = new THREE.DirectionalLight(0xffffff,1);
 light.position.set(5,10,5);
 scene.add(light);
 
-let currentModel;
+// WIND PARTICLES (RED)
+const particleGeo = new THREE.BufferGeometry();
+const count = 5000;
+const arr = new Float32Array(count*3);
 
-function clearModel(){
-    if(currentModel) scene.remove(currentModel);
+for(let i=0;i<count*3;i++){
+    arr[i]=(Math.random()-0.5)*30;
 }
+particleGeo.setAttribute('position', new THREE.BufferAttribute(arr,3));
 
-function loadPreset(){
-    clearModel();
+const particleMat = new THREE.PointsMaterial({
+    size:0.04,
+    color:0xff0000
+});
 
-    const type=document.getElementById("modelSelect").value;
-    const mat=new THREE.MeshStandardMaterial({color:0x00ffd0});
-    let mesh;
+const particles = new THREE.Points(particleGeo,particleMat);
+scene.add(particles);
 
-    if(type==="f1"){
-        const body=new THREE.BoxGeometry(3,0.4,1);
-        const nose=new THREE.ConeGeometry(0.5,1.5,32);
-        const wing=new THREE.BoxGeometry(2.5,0.1,0.6);
+let windSpeed = 60;
 
-        const group=new THREE.Group();
-        group.add(new THREE.Mesh(body,mat));
-        const noseMesh=new THREE.Mesh(nose,mat);
-        noseMesh.rotation.z=Math.PI/2;
-        noseMesh.position.x=2.2;
-        group.add(noseMesh);
+// FORCE ARROWS
+const dragArrow = new THREE.ArrowHelper(
+    new THREE.Vector3(-1,0,0),
+    new THREE.Vector3(0,0,0),
+    2,
+    0xff0000
+);
+scene.add(dragArrow);
 
-        const wingMesh=new THREE.Mesh(wing,mat);
-        wingMesh.position.set(-1.5,0.3,0);
-        group.add(wingMesh);
+const liftArrow = new THREE.ArrowHelper(
+    new THREE.Vector3(0,1,0),
+    new THREE.Vector3(0,0,0),
+    2,
+    0x0000ff
+);
+scene.add(liftArrow);
 
-        mesh=group;
+// DEFAULT TEST OBJECT
+let currentModel = new THREE.Mesh(
+    new THREE.BoxGeometry(2,0.8,1.2),
+    new THREE.MeshStandardMaterial({color:0x888888})
+);
+scene.add(currentModel);
 
-        document.getElementById("cd").value=0.9;
-        document.getElementById("cl").value=-3.5;
-        document.getElementById("area").value=1.6;
-    }
+// IMPORT MODEL
+const loader = new THREE.GLTFLoader();
+document.getElementById("upload").addEventListener("change",e=>{
+    const file=e.target.files[0];
+    const reader=new FileReader();
+    reader.onload=function(ev){
+        loader.parse(ev.target.result,'',gltf=>{
+            scene.remove(currentModel);
+            currentModel=gltf.scene;
+            scene.add(currentModel);
+        });
+    };
+    reader.readAsArrayBuffer(file);
+});
 
-    if(type==="nascar"){
-        mesh=new THREE.Mesh(new THREE.BoxGeometry(3.5,0.8,1.5),mat);
-        document.getElementById("cd").value=0.35;
-        document.getElementById("cl").value=-0.8;
-        document.getElementById("area").value=2.2;
-    }
-
-    if(type==="lmp"){
-        mesh=new THREE.Mesh(new THREE.BoxGeometry(3.2,0.5,1.3),mat);
-        document.getElementById("cd").value=0.32;
-        document.getElementById("cl").value=-2.2;
-        document.getElementById("area").value=1.8;
-    }
-
-    if(type==="wing"){
-        mesh=new THREE.Mesh(new THREE.BoxGeometry(3,0.2,0.6),mat);
-        document.getElementById("cd").value=0.8;
-        document.getElementById("cl").value=-1.8;
-        document.getElementById("area").value=0.6;
-    }
-
-    if(type==="cube"){
-        mesh=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),mat);
-        document.getElementById("cd").value=1.05;
-        document.getElementById("cl").value=0;
-        document.getElementById("area").value=1;
-    }
-
-    if(type==="cylinder"){
-        mesh=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,2,32),mat);
-        document.getElementById("cd").value=0.82;
-        document.getElementById("cl").value=0;
-        document.getElementById("area").value=0.78;
-    }
-
-    currentModel=mesh;
-    scene.add(mesh);
-}
-
-function airDensity(temp){
-    const R=287.05;
-    const T=temp+273.15;
-    const P=101325;
-    return P/(R*T);
-}
-
+// PHYSICS
 function runSim(){
     const v=parseFloat(document.getElementById("wind").value);
     const Cd=parseFloat(document.getElementById("cd").value);
     const Cl=parseFloat(document.getElementById("cl").value);
     const A=parseFloat(document.getElementById("area").value);
-    const temp=parseFloat(document.getElementById("temp").value);
 
-    const rho=airDensity(temp);
+    const rho=1.225;
     const q=0.5*rho*v*v;
 
     const drag=q*Cd*A;
     const lift=q*Cl*A;
-    const mach=v/343;
-    const efficiency=Math.abs(lift/drag);
+
+    windSpeed=v;
+
+    dragArrow.setLength(Math.abs(drag)/500);
+    liftArrow.setLength(Math.abs(lift)/500);
 
     document.getElementById("telemetry").innerHTML=`
     Dynamic Pressure: ${q.toFixed(2)} Pa<br>
     Drag Force: ${drag.toFixed(1)} N<br>
-    Downforce: ${lift.toFixed(1)} N<br>
-    Mach #: ${mach.toFixed(3)}<br>
-    L/D Ratio: ${efficiency.toFixed(2)}<br>
-    Air Density: ${rho.toFixed(3)} kg/m³
+    Lift/Downforce: ${lift.toFixed(1)} N
     `;
 }
 
-loadPreset();
-
+// ANIMATE WIND FLOW
 function animate(){
     requestAnimationFrame(animate);
+
+    const pos=particles.geometry.attributes.position.array;
+
+    for(let i=0;i<pos.length;i+=3){
+        pos[i]+=windSpeed*0.02;
+
+        // Simulate airflow bending around object
+        if(Math.abs(pos[i]) < 2 && Math.abs(pos[i+1]) < 1){
+            pos[i+1]+=0.05;
+        }
+
+        if(pos[i]>15) pos[i]=-15;
+    }
+
+    particles.geometry.attributes.position.needsUpdate=true;
+
     renderer.render(scene,camera);
 }
 animate();
