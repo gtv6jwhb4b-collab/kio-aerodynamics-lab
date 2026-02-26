@@ -2,16 +2,18 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>KIO AeroLab | Wind Flow Around Object</title>
+<title>KIO AeroLab | Engineering Analysis Suite</title>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/loaders/GLTFLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <style>
 body{
     margin:0;
-    background:#3a3a3a;
+    background:#2b2b2b;
     font-family:Arial;
     color:white;
     overflow:hidden;
@@ -21,20 +23,14 @@ body{
     position:absolute;
     left:20px;
     top:20px;
-    width:420px;
-    background:#4a4a4a;
+    width:480px;
+    background:#3a3a3a;
     padding:20px;
     border-radius:10px;
 }
 
 h1{
     font-size:18px;
-    margin-bottom:5px;
-}
-
-.sub{
-    font-size:11px;
-    margin-bottom:10px;
 }
 
 label{
@@ -43,7 +39,7 @@ label{
     display:block;
 }
 
-input{
+input, select, button{
     width:100%;
     padding:6px;
     margin-top:4px;
@@ -53,22 +49,29 @@ input{
 }
 
 button{
-    width:100%;
-    margin-top:10px;
-    padding:8px;
     background:red;
-    border:none;
     font-weight:bold;
     cursor:pointer;
 }
 
 #telemetry{
-    margin-top:12px;
+    margin-top:10px;
     font-size:12px;
     line-height:1.6;
-    background:#555;
+    background:#444;
     padding:10px;
     border-radius:6px;
+}
+
+#graphContainer{
+    margin-top:10px;
+    background:#444;
+    padding:10px;
+    border-radius:6px;
+}
+
+canvas{
+    width:100%;
 }
 </style>
 </head>
@@ -76,128 +79,203 @@ button{
 <body>
 
 <div id="panel">
-<h1>KIO Wind Tunnel</h1>
-<div class="sub">Keep It Original – Engineered by Bam Vytlas</div>
+<h1>KIO AeroLab</h1>
+<div style="font-size:11px;">Engineering Analysis Suite</div>
 
 <label>Wind Speed (m/s)</label>
-<input type="number" id="wind" value="60">
+<input type="number" id="wind" value="20">
+
+<label>Ride Height (mm)</label>
+<input type="number" id="ride" value="30">
 
 <label>Drag Coefficient (Cd)</label>
 <input type="number" id="cd" value="0.30">
 
-<label>Lift Coefficient (Cl)</label>
-<input type="number" id="cl" value="-1.5">
-
 <label>Frontal Area (m²)</label>
 <input type="number" id="area" value="1.5">
+
+<label>Wheel Diameter (m)</label>
+<input type="number" id="wheel" value="0.6">
 
 <label>Import Model (.glb/.gltf)</label>
 <input type="file" id="upload">
 
-<button onclick="runSim()">Run Simulation</button>
+<button onclick="runAnalysis()">Run Analysis</button>
+<button onclick="generateReport()">Generate Engineering Report (PDF)</button>
 
 <div id="telemetry"></div>
+
+<div id="graphContainer">
+<canvas id="dragGraph"></canvas>
+</div>
 </div>
 
 <script>
+// THREE.JS SETUP
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x3a3a3a);
+scene.background = new THREE.Color(0x2b2b2b);
 
-const camera = new THREE.PerspectiveCamera(70,window.innerWidth/window.innerHeight,0.1,1000);
-camera.position.set(0,2,7);
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 2, 7);
 
-const renderer = new THREE.WebGLRenderer({antialias:true});
-renderer.setSize(window.innerWidth,window.innerHeight);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-// ORBIT CONTROLS (camera movement)
+// ORBIT CONTROLS
 const controls = new THREE.OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.dampingFactor = 0.07;
-controls.minDistance = 2;
-controls.maxDistance = 20;
 
-const light = new THREE.DirectionalLight(0xffffff,1);
-light.position.set(5,10,5);
+// LIGHTING
+const light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(5, 10, 5);
 scene.add(light);
 
-// TEST OBJECT (default)
+// MODEL
 let currentModel = new THREE.Mesh(
-    new THREE.BoxGeometry(2,0.8,1.2),
-    new THREE.MeshStandardMaterial({color:0x888888})
+    new THREE.BoxGeometry(2, 0.8, 1.2),
+    new THREE.MeshStandardMaterial({ color: 0x888888, vertexColors: true })
 );
 scene.add(currentModel);
 
-// IMPORT MODEL
-const loader = new THREE.GLTFLoader();
-document.getElementById("upload").addEventListener("change",e=>{
-    const file=e.target.files[0];
-    const reader=new FileReader();
-    reader.onload=function(ev){
-        loader.parse(ev.target.result,'',gltf=>{
-            scene.remove(currentModel);
-            currentModel=gltf.scene;
-            scene.add(currentModel);
-        });
-    };
-    reader.readAsArrayBuffer(file);
-});
-
-// AIRFLOW PARTICLES (around object only)
+// AIRFLOW
 let flowParticles;
 function createFlow(){
     if(flowParticles) scene.remove(flowParticles);
 
     const geo = new THREE.BufferGeometry();
-    const count = 2000;
+    const count = 3500;
     const positions = new Float32Array(count * 3);
 
     for(let i=0;i<count;i++){
-        // Spawn near object area
-        positions[i*3]     = (Math.random()-0.5) * 6;
-        positions[i*3 + 1]  = (Math.random()-0.5) * 3;
-        positions[i*3 + 2]   = (Math.random()-0.5) * 3;
+        positions[i*3] = (Math.random()-0.5) * 6;
+        positions[i*3+1] = (Math.random()-0.5) * 3;
+        positions[i*3+2] = (Math.random()-0.5) * 3;
     }
 
     geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
 
     const mat = new THREE.PointsMaterial({
-        size:0.04,
-        color:0xff0000
+        size: 0.04,
+        color: 0xff0000
     });
 
-    flowParticles = new THREE.Points(geo,mat);
+    flowParticles = new THREE.Points(geo, mat);
     scene.add(flowParticles);
 }
 
 createFlow();
 
-// SIMULATION LOGIC
-let windSpeed = 60;
+// PRESSURE HEATMAP
+function createPressureMap(){
+    currentModel.traverse(child=>{
+        if(child.isMesh){
+            const geometry = child.geometry;
+            const pos = geometry.attributes.position;
 
-function runSim(){
+            const colors = [];
+
+            for(let i=0;i<pos.count;i++){
+                const y = pos.getY(i);
+                const pressure = 1 - (y * 0.2);
+
+                colors.push(
+                    pressure,
+                    0,
+                    1 - pressure
+                );
+            }
+
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors,3));
+            child.material = new THREE.MeshStandardMaterial({
+                vertexColors: true,
+                side: THREE.DoubleSide
+            });
+        }
+    });
+}
+
+// DRAG & WHEEL SIMULATION
+let dragData = [];
+
+function runAnalysis(){
     const v = parseFloat(document.getElementById("wind").value);
     const Cd = parseFloat(document.getElementById("cd").value);
-    const Cl = parseFloat(document.getElementById("cl").value);
-    const A  = parseFloat(document.getElementById("area").value);
+    const A = parseFloat(document.getElementById("area").value);
+    const wheel = parseFloat(document.getElementById("wheel").value);
 
-    const rho = 1.225;
-    const q = 0.5 * rho * v * v;
-    const drag = q * Cd * A;
-    const lift = q * Cl * A;
+    dragData = [];
 
-    windSpeed = v;
+    for(let speed = 0; speed <= v; speed += 5){
+        const rho = 1.225;
+        const drag = 0.5 * rho * speed * speed * Cd * A;
+
+        // wheel/tire drag (rolling resistance)
+        const wheelDrag = 0.02 * wheel * speed;
+
+        dragData.push({
+            speed,
+            drag: drag + wheelDrag
+        });
+    }
 
     document.getElementById("telemetry").innerHTML = `
-    Dynamic Pressure: ${q.toFixed(2)} Pa<br>
-    Drag Force: ${drag.toFixed(1)} N<br>
-    Downforce: ${lift.toFixed(1)} N
+    Drag at ${v} m/s: ${dragData[dragData.length-1].drag.toFixed(2)} N
     `;
 
     createFlow();
+    createPressureMap();
+    drawGraph();
 }
 
-// FLOW ANIMATION (around object)
+// GRAPH VISUALIZATION (Drag vs Speed)
+let chart;
+
+function drawGraph(){
+    const ctx = document.getElementById('dragGraph').getContext('2d');
+
+    const labels = dragData.map(d => d.speed);
+    const values = dragData.map(d => d.drag);
+
+    if(chart) chart.destroy();
+
+    chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Drag Force (N)',
+                data: values,
+                borderColor: 'red',
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                x: { title: { display: true, text: 'Speed (m/s)' } },
+                y: { title: { display: true, text: 'Drag (N)' } }
+            }
+        }
+    });
+}
+
+// ENGINEERING REPORT (PDF)
+function generateReport(){
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+
+    doc.text("KIO AeroLab Engineering Report", 10, 10);
+    doc.text("Aerodynamic Analysis", 10, 20);
+
+    dragData.forEach((d,i)=>{
+        doc.text(`Speed: ${d.speed} m/s - Drag: ${d.drag.toFixed(2)} N`, 10, 30 + (i*10));
+    });
+
+    doc.save("KIO_Aero_Report.pdf");
+}
+
+// FLOW ANIMATION
 function animate(){
     requestAnimationFrame(animate);
 
@@ -205,11 +283,9 @@ function animate(){
         const pos = flowParticles.geometry.attributes.position.array;
 
         for(let i=0;i<pos.length;i+=3){
-            // Move particles toward back (wind direction)
-            pos[i] += windSpeed * 0.01;
+            pos[i] += 0.5;
 
-            // If near object center, deflect upward (simulating flow)
-            if(Math.abs(pos[i]) < 1.2 && Math.abs(pos[i+1]) < 0.6){
+            if(Math.abs(pos[i]) < 1.4 && Math.abs(pos[i+1]) < 0.7){
                 pos[i+1] += 0.05;
             }
 
@@ -220,15 +296,16 @@ function animate(){
     }
 
     controls.update();
-    renderer.render(scene,camera);
+    renderer.render(scene, camera);
 }
 
 animate();
 
+// RESIZE
 window.addEventListener("resize",()=>{
-    camera.aspect=window.innerWidth/window.innerHeight;
+    camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth,window.innerHeight);
+    renderer.setSize(window.innerWidth, window.innerHeight);
 });
 </script>
 
